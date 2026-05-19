@@ -1,0 +1,5 @@
+[project]
+name = "decidecasa-agentos"
+version = "0.1.0"
+description = "Streamlit AgentOS end-to-end para consultar Supabase con OOP, seguridad SQL e insights inmobiliarios."
+requires-python = ">=3.10"

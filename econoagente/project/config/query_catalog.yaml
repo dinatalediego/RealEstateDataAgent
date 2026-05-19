@@ -1,0 +1,99 @@
+queries:
+  - id: inventory_by_project
+    agent: InventoryAgent
+    title: Stock disponible por proyecto
+    description: Cuenta unidades disponibles por proyecto.
+    keywords: [disponible, disponibilidad, stock, inventario, unidades por vender]
+    chart: bar
+    confidence_rules:
+      critical_columns: [proyecto, unidades_disponibles]
+    sql: |
+      select
+          proyecto,
+          count(*) as unidades_disponibles
+      from gold.fact_inventory
+      where lower(coalesce(estado_comercial, '')) in ('disponible', 'por vender', '02_por vender')
+      group by proyecto
+      order by unidades_disponibles desc
+      limit 100
+
+  - id: avg_price_m2_by_district
+    agent: MarketAgent
+    title: Precio promedio por m2 por distrito
+    description: Calcula precio m2 promedio por distrito.
+    keywords: [precio m2, precio por m2, metro cuadrado, distrito, distritos]
+    chart: bar
+    confidence_rules:
+      critical_columns: [distrito, precio_m2_promedio]
+    sql: |
+      select
+          distrito,
+          round(avg(precio_m2)::numeric, 2) as precio_m2_promedio,
+          count(*) as n_unidades
+      from gold.fact_unit_metrics
+      where precio_m2 is not null
+        and distrito is not null
+      group by distrito
+      order by precio_m2_promedio desc
+      limit 100
+
+  - id: collections_by_project
+    agent: FinanceAgent
+    title: Cobranzas por proyecto
+    description: Resume venta, cobrado, pendiente y porcentaje cobrado.
+    keywords: [cobranza, cobrado, pagos, pendiente, brecha]
+    chart: bar
+    confidence_rules:
+      critical_columns: [proyecto, venta_total, cobrado_total, pendiente_total]
+    sql: |
+      select
+          proyecto,
+          sum(monto_venta) as venta_total,
+          sum(monto_cobrado) as cobrado_total,
+          sum(monto_pendiente) as pendiente_total,
+          round((sum(monto_cobrado) / nullif(sum(monto_venta), 0))::numeric, 4) as porcentaje_cobrado
+      from gold.fact_cobranzas
+      group by proyecto
+      order by pendiente_total desc
+      limit 100
+
+  - id: data_freshness_projects
+    agent: DataQualityAgent
+    title: Frescura de proyectos scrapeados
+    description: Identifica proyectos con last_seen_at y updated_at más antiguos.
+    keywords: [last_seen_at, updated_at, fresco, frescura, desactualizado, scraping, scrapeado]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, last_seen_at, updated_at]
+    sql: |
+      select
+          proyecto,
+          url,
+          last_seen_at,
+          updated_at,
+          n_snapshots
+      from gold.dim_project
+      order by coalesce(last_seen_at, updated_at) asc nulls first
+      limit 100
+
+  - id: project_metrics_summary
+    agent: CommercialAgent
+    title: Métricas comerciales por proyecto
+    description: Resume tipologías, disponibilidad, precio mínimo/promedio/máximo y precio m2.
+    keywords: [metricas proyecto, resumen proyecto, proyectos, tipologias, precio promedio]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, n_tipologias, sum_unidades_disponibles]
+    sql: |
+      select
+          proyecto,
+          n_tipologias,
+          sum_unidades_disponibles,
+          min_precio,
+          avg_precio,
+          max_precio,
+          avg_precio_m2,
+          last_seen_at
+      from gold.mart_project_metrics
+      order by sum_unidades_disponibles desc nulls last
+      limit 100
