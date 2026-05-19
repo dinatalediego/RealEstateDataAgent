@@ -81,7 +81,8 @@ if st.button("Responder", type="primary", use_container_width=True):
     if not question.strip():
         st.warning("Escribe una pregunta o selecciona un ejemplo.")
     else:
-        council = build_agent_council(settings)
+        #council = build_agent_council(settings)
+        council = build_agent_council(settings, catalog_path=CATALOG_PATH)
         response = council.ask(question, forced_query_id=forced_query_id)
         st.session_state.history.insert(0, response)
 

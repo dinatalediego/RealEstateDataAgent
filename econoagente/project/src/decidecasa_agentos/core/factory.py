@@ -12,8 +12,16 @@ from decidecasa_agentos.security.query_shield import QueryShield
 from decidecasa_agentos.utils.settings import AppSettings
 
 
-def build_agent_council(settings: AppSettings) -> AgentCouncil:
+""" def build_agent_council(settings: AppSettings) -> AgentCouncil:
     catalog = BusinessQuestionCatalog()
+ """
+from pathlib import Path
+
+def build_agent_council(
+    settings: AppSettings,
+    catalog_path: str | Path | None = None
+    ) -> AgentCouncil:
+    catalog = BusinessQuestionCatalog(catalog_path)
     router = BusinessQuestionRouter(catalog)
     shield = QueryShield(settings.allowed_schemas, max_rows=settings.max_rows)
     runner = SupabaseQueryRunner(settings)
