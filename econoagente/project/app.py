@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
+CATALOG_PATH = ROOT / "config" / "query_catalog.yaml"
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -24,7 +25,7 @@ st.set_page_config(
 
 settings = load_settings()
 #catalog = BusinessQuestionCatalog()
-catalog = BusinessQuestionCatalog(ROOT / "config" / "query_catalog.yaml")
+catalog = BusinessQuestionCatalog(CATALOG_PATH)
 health = ConnectionHealthCheck(settings)
 chart_builder = InsightChartBuilder()
 
