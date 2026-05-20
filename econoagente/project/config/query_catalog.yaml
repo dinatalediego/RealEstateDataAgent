@@ -1,99 +1,355 @@
+# ============================================================
+# DecideCasa AgentOS | Query Catalog real_analytics
+# Regla PRO:
+# 1) Probar primero cada SQL en Supabase SQL Editor.
+# 2) Luego agregarlo al catálogo.
+# 3) El agente solo ejecuta consultas aprobadas y protegidas.
+#
+# Tablas reales usadas:
+# - gold.dim_project
+# - gold.fact_tipologia_snapshot
+# - gold.mart_project_metrics
+# - gold.mart_market_price_m2
+# - ml.features_tipologias
+# - ops.data_load_audit
+# - ops.schema_migrations
+# ============================================================
+
 queries:
-  - id: inventory_by_project
-    agent: InventoryAgent
-    title: Stock disponible por proyecto
-    description: Cuenta unidades disponibles por proyecto.
-    keywords: [disponible, disponibilidad, stock, inventario, unidades por vender]
-    chart: bar
-    confidence_rules:
-      critical_columns: [proyecto, unidades_disponibles]
-    sql: |
-      select
-          proyecto,
-          count(*) as unidades_disponibles
-      from gold.fact_inventory
-      where lower(coalesce(estado_comercial, '')) in ('disponible', 'por vender', '02_por vender')
-      group by proyecto
-      order by unidades_disponibles desc
-      limit 100
-
-  - id: avg_price_m2_by_district
-    agent: MarketAgent
-    title: Precio promedio por m2 por distrito
-    description: Calcula precio m2 promedio por distrito.
-    keywords: [precio m2, precio por m2, metro cuadrado, distrito, distritos]
-    chart: bar
-    confidence_rules:
-      critical_columns: [distrito, precio_m2_promedio]
-    sql: |
-      select
-          distrito,
-          round(avg(precio_m2)::numeric, 2) as precio_m2_promedio,
-          count(*) as n_unidades
-      from gold.fact_unit_metrics
-      where precio_m2 is not null
-        and distrito is not null
-      group by distrito
-      order by precio_m2_promedio desc
-      limit 100
-
-  - id: collections_by_project
-    agent: FinanceAgent
-    title: Cobranzas por proyecto
-    description: Resume venta, cobrado, pendiente y porcentaje cobrado.
-    keywords: [cobranza, cobrado, pagos, pendiente, brecha]
-    chart: bar
-    confidence_rules:
-      critical_columns: [proyecto, venta_total, cobrado_total, pendiente_total]
-    sql: |
-      select
-          proyecto,
-          sum(monto_venta) as venta_total,
-          sum(monto_cobrado) as cobrado_total,
-          sum(monto_pendiente) as pendiente_total,
-          round((sum(monto_cobrado) / nullif(sum(monto_venta), 0))::numeric, 4) as porcentaje_cobrado
-      from gold.fact_cobranzas
-      group by proyecto
-      order by pendiente_total desc
-      limit 100
-
-  - id: data_freshness_projects
-    agent: DataQualityAgent
-    title: Frescura de proyectos scrapeados
-    description: Identifica proyectos con last_seen_at y updated_at más antiguos.
-    keywords: [last_seen_at, updated_at, fresco, frescura, desactualizado, scraping, scrapeado]
+  - id: project_metrics_summary
+    agent: CommercialAgent
+    title: Resumen ejecutivo por proyecto
+    description: Resume tipologías, stock publicado, precios y precio por m2 por proyecto.
+    keywords: [resumen proyecto, proyectos, metricas proyecto, stock por proyecto, precio promedio, precio m2 proyecto]
     chart: table
     confidence_rules:
-      critical_columns: [proyecto, last_seen_at, updated_at]
+      critical_columns: [proyecto, n_tipologias, sum_unidades_disponibles, avg_precio_m2]
     sql: |
       select
           proyecto,
           url,
-          last_seen_at,
-          updated_at,
-          n_snapshots
-      from gold.dim_project
-      order by coalesce(last_seen_at, updated_at) asc nulls first
-      limit 100
-
-  - id: project_metrics_summary
-    agent: CommercialAgent
-    title: Métricas comerciales por proyecto
-    description: Resume tipologías, disponibilidad, precio mínimo/promedio/máximo y precio m2.
-    keywords: [metricas proyecto, resumen proyecto, proyectos, tipologias, precio promedio]
-    chart: table
-    confidence_rules:
-      critical_columns: [proyecto, n_tipologias, sum_unidades_disponibles]
-    sql: |
-      select
-          proyecto,
           n_tipologias,
+          n_parse_ok,
+          n_parse_fail,
           sum_unidades_disponibles,
-          min_precio,
-          avg_precio,
-          max_precio,
-          avg_precio_m2,
+          round(min_precio::numeric, 2) as min_precio,
+          round(avg_precio::numeric, 2) as avg_precio,
+          round(max_precio::numeric, 2) as max_precio,
+          round(min_precio_m2::numeric, 2) as min_precio_m2,
+          round(avg_precio_m2::numeric, 2) as avg_precio_m2,
+          round(max_precio_m2::numeric, 2) as max_precio_m2,
           last_seen_at
       from gold.mart_project_metrics
       order by sum_unidades_disponibles desc nulls last
       limit 100
+
+  - id: stock_publicado_by_project
+    agent: InventoryAgent
+    title: Stock publicado por proyecto
+    description: Suma unidades disponibles publicadas por proyecto.
+    keywords: [stock, inventario, disponible, disponibilidad, unidades disponibles, unidades por proyecto]
+    chart: bar
+    confidence_rules:
+      critical_columns: [proyecto, stock_publicado]
+    sql: |
+      select
+          proyecto,
+          round(sum_unidades_disponibles::numeric, 0) as stock_publicado,
+          n_tipologias,
+          last_seen_at
+      from gold.mart_project_metrics
+      where sum_unidades_disponibles is not null
+      order by stock_publicado desc nulls last
+      limit 50
+
+  - id: price_m2_ranking_by_project
+    agent: MarketAgent
+    title: Ranking de precio m2 por proyecto
+    description: Ordena proyectos por precio m2 promedio publicado.
+    keywords: [ranking precio m2, precio m2 proyecto, proyecto caro, proyecto barato, benchmark proyecto]
+    chart: bar
+    confidence_rules:
+      critical_columns: [proyecto, avg_precio_m2]
+    sql: |
+      select
+          proyecto,
+          round(avg_precio_m2::numeric, 2) as avg_precio_m2,
+          round(min_precio_m2::numeric, 2) as min_precio_m2,
+          round(max_precio_m2::numeric, 2) as max_precio_m2,
+          n_tipologias,
+          last_seen_at
+      from gold.mart_project_metrics
+      where avg_precio_m2 is not null
+      order by avg_precio_m2 desc
+      limit 50
+
+  - id: market_price_m2_by_segment
+    agent: MarketAgent
+    title: Benchmark de precio m2 por segmento
+    description: Resume precio m2 por dormitorios, baños y rango de área.
+    keywords: [benchmark, segmento, dormitorios, banos, baños, area, area bucket, precio m2 segmento]
+    chart: table
+    confidence_rules:
+      critical_columns: [dormitorios, area_bucket, avg_precio_m2, n_rows]
+    sql: |
+      select
+          fuente,
+          dormitorios,
+          banos,
+          area_bucket,
+          n_rows,
+          round(avg_precio_m2::numeric, 2) as avg_precio_m2,
+          round(p25_precio_m2::numeric, 2) as p25_precio_m2,
+          round(p50_precio_m2::numeric, 2) as p50_precio_m2,
+          round(p75_precio_m2::numeric, 2) as p75_precio_m2,
+          round(min_precio_m2::numeric, 2) as min_precio_m2,
+          round(max_precio_m2::numeric, 2) as max_precio_m2
+      from gold.mart_market_price_m2
+      order by dormitorios nulls last, banos nulls last, area_bucket
+      limit 100
+
+  - id: latest_tipologias_by_project
+    agent: InventoryAgent
+    title: Tipologías publicadas por proyecto
+    description: Muestra tipologías válidas con área, precio, precio m2, pisos y stock.
+    keywords: [tipologias, modelos, departamentos, unidades, area, pisos, stock tipologia]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, modelo, area_m2, precio_desde, precio_m2]
+    sql: |
+      select
+          proyecto,
+          modelo,
+          area_m2,
+          dormitorios,
+          banos,
+          piso_min,
+          piso_max,
+          round(unidades_disponibles::numeric, 0) as unidades_disponibles,
+          moneda,
+          round(precio_desde::numeric, 2) as precio_desde,
+          round(precio_m2::numeric, 2) as precio_m2,
+          scraped_at,
+          snapshot_date
+      from gold.fact_tipologia_snapshot
+      where parse_ok = true
+      order by proyecto, dormitorios nulls last, area_m2 nulls last, precio_m2 nulls last
+      limit 300
+
+  - id: high_price_m2_tipologias
+    agent: MarketAgent
+    title: Tipologías con mayor precio m2
+    description: Identifica las tipologías publicadas con mayor precio por m2.
+    keywords: [mayor precio m2, mas caro, premium, tipologias caras, precio alto]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, modelo, precio_m2]
+    sql: |
+      select
+          proyecto,
+          modelo,
+          area_m2,
+          dormitorios,
+          banos,
+          round(precio_desde::numeric, 2) as precio_desde,
+          round(precio_m2::numeric, 2) as precio_m2,
+          unidades_disponibles,
+          snapshot_date
+      from gold.fact_tipologia_snapshot
+      where parse_ok = true
+        and precio_m2 is not null
+      order by precio_m2 desc
+      limit 50
+
+  - id: low_price_m2_tipologias
+    agent: MarketAgent
+    title: Tipologías con menor precio m2
+    description: Identifica oportunidades de menor precio por m2 publicado.
+    keywords: [menor precio m2, mas barato, oportunidad, precio bajo, tipologias baratas]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, modelo, precio_m2]
+    sql: |
+      select
+          proyecto,
+          modelo,
+          area_m2,
+          dormitorios,
+          banos,
+          round(precio_desde::numeric, 2) as precio_desde,
+          round(precio_m2::numeric, 2) as precio_m2,
+          unidades_disponibles,
+          snapshot_date
+      from gold.fact_tipologia_snapshot
+      where parse_ok = true
+        and precio_m2 is not null
+      order by precio_m2 asc
+      limit 50
+
+  - id: inventory_by_bedrooms
+    agent: InventoryAgent
+    title: Stock publicado por dormitorios
+    description: Agrupa unidades disponibles, precio promedio y precio m2 por número de dormitorios.
+    keywords: [dormitorios, 1 dormitorio, 2 dormitorios, 3 dormitorios, stock dormitorios, precio dormitorios]
+    chart: bar
+    confidence_rules:
+      critical_columns: [dormitorios, stock_publicado, avg_precio_m2]
+    sql: |
+      select
+          dormitorios,
+          count(*) as n_tipologias,
+          round(sum(unidades_disponibles)::numeric, 0) as stock_publicado,
+          round(avg(precio_desde)::numeric, 2) as avg_precio_desde,
+          round(avg(precio_m2)::numeric, 2) as avg_precio_m2
+      from gold.fact_tipologia_snapshot
+      where parse_ok = true
+      group by dormitorios
+      order by dormitorios nulls last
+      limit 20
+
+  - id: price_m2_by_area_bucket
+    agent: MarketAgent
+    title: Precio m2 por rango de área
+    description: Usa la feature layer para analizar precio m2 por bucket de área.
+    keywords: [area bucket, rango area, precio m2 area, area m2, metraje]
+    chart: bar
+    confidence_rules:
+      critical_columns: [area_bucket, avg_precio_m2, n_tipologias]
+    sql: |
+      select
+          area_bucket,
+          count(*) as n_tipologias,
+          round(avg(area_m2)::numeric, 2) as avg_area_m2,
+          round(avg(precio_desde)::numeric, 2) as avg_precio_desde,
+          round(avg(precio_m2)::numeric, 2) as avg_precio_m2,
+          round(min(precio_m2)::numeric, 2) as min_precio_m2,
+          round(max(precio_m2)::numeric, 2) as max_precio_m2
+      from ml.features_tipologias
+      where precio_m2 is not null
+      group by area_bucket
+      order by min(area_m2) nulls last
+      limit 50
+
+  - id: data_freshness_projects
+    agent: DataQualityAgent
+    title: Frescura de proyectos scrapeados
+    description: Identifica proyectos con last_seen_at más antiguo o sin snapshots.
+    keywords: [frescura, actualizado, desactualizado, last_seen_at, scraping, scrapeado, antiguedad]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, last_seen_at, n_snapshots]
+    sql: |
+      select
+          proyecto,
+          url,
+          first_seen_at,
+          last_seen_at,
+          updated_at,
+          n_snapshots,
+          extract(day from (now() - coalesce(last_seen_at, updated_at)))::integer as dias_desde_actualizacion
+      from gold.dim_project
+      order by coalesce(last_seen_at, updated_at) asc nulls first
+      limit 100
+
+  - id: parser_quality_by_project
+    agent: DataQualityAgent
+    title: Calidad de parseo por proyecto
+    description: Revisa parse_ok, parse_fail y tasa de error por proyecto.
+    keywords: [calidad, parse, parse_ok, parse_fail, errores scraper, calidad proyecto]
+    chart: table
+    confidence_rules:
+      critical_columns: [proyecto, n_parse_ok, n_parse_fail, parse_fail_rate]
+    sql: |
+      select
+          proyecto,
+          n_tipologias,
+          n_parse_ok,
+          n_parse_fail,
+          round((n_parse_fail::numeric / nullif((n_parse_ok + n_parse_fail), 0)), 4) as parse_fail_rate,
+          last_seen_at
+      from gold.mart_project_metrics
+      order by parse_fail_rate desc nulls last, n_parse_fail desc nulls last
+      limit 100
+
+  - id: daily_snapshot_volume
+    agent: DataQualityAgent
+    title: Volumen diario de snapshots
+    description: Cuenta snapshots por fecha de scraping y fuente.
+    keywords: [snapshots, volumen diario, fecha scraping, historico scraping, snapshot_date]
+    chart: line
+    confidence_rules:
+      critical_columns: [snapshot_date, n_snapshots]
+    sql: |
+      select
+          snapshot_date,
+          fuente,
+          count(*) as n_snapshots,
+          count(distinct project_key) as n_proyectos,
+          count(distinct url) as n_urls
+      from gold.fact_tipologia_snapshot
+      group by snapshot_date, fuente
+      order by snapshot_date desc
+      limit 90
+
+  - id: ml_feature_dataset_summary
+    agent: DataQualityAgent
+    title: Resumen del dataset ML
+    description: Resume filas, proyectos, precio m2 y rangos de fechas en la feature layer.
+    keywords: [ml, machine learning, features, dataset entrenamiento, feature layer, entrenamiento]
+    chart: table
+    confidence_rules:
+      critical_columns: [n_features, n_proyectos, avg_precio_m2]
+    sql: |
+      select
+          count(*) as n_features,
+          count(distinct project_key) as n_proyectos,
+          count(distinct url) as n_urls,
+          round(avg(precio_m2)::numeric, 2) as avg_precio_m2,
+          round(min(precio_m2)::numeric, 2) as min_precio_m2,
+          round(max(precio_m2)::numeric, 2) as max_precio_m2,
+          min(snapshot_date) as min_snapshot_date,
+          max(snapshot_date) as max_snapshot_date
+      from ml.features_tipologias
+      limit 1
+
+  - id: supabase_load_audit_latest
+    agent: DataQualityAgent
+    title: Últimas cargas a Supabase
+    description: Revisa auditoría de cargas del pipeline hacia Supabase.
+    keywords: [auditoria, cargas, supabase, data load, load audit, sync, sincronizacion]
+    chart: table
+    confidence_rules:
+      critical_columns: [schema_name, table_name, status, rows_loaded]
+    sql: |
+      select
+          schema_name,
+          table_name,
+          status,
+          rows_attempted,
+          rows_loaded,
+          started_at,
+          ended_at,
+          error_message
+      from ops.data_load_audit
+      order by started_at desc
+      limit 100
+
+  - id: schema_migrations_latest
+    agent: DataQualityAgent
+    title: Últimas migraciones de schema
+    description: Muestra las últimas migraciones registradas del esquema.
+    keywords: [migraciones, schema, sql, estructura, cambios schema, schema migrations]
+    chart: table
+    confidence_rules:
+      critical_columns: [migration_id, applied_at, status]
+    sql: |
+      select
+          migration_id,
+          file_name,
+          sha256,
+          applied_at,
+          status,
+          error_message
+      from ops.schema_migrations
+      order by applied_at desc
+      limit 50
